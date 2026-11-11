@@ -1,0 +1,782 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>متوسطة المستقبل للبنين</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+  body { font-family: 'Cairo', system-ui, sans-serif; }
+  [data-ph]:empty::before { content: attr(data-ph); color: #94a3b8; }
+  [contenteditable]:focus { outline: 2px solid #b08d3a; outline-offset: 2px; }
+  .btn { display: inline-flex; align-items: center; gap: .5rem; border-radius: .6rem; padding: .55rem 1rem; font-weight: 700; font-size: .9rem; transition: background .15s, color .15s, border-color .15s; white-space: nowrap; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .btn-primary { background: #1e3a5f; color: #fff; }
+  .btn-primary:hover:not(:disabled) { background: #162d4a; }
+  .btn-ghost { background: #fff; border: 1px solid #cbd5e1; color: #1e293b; }
+  .btn-ghost:hover:not(:disabled) { background: #f1f5f9; }
+  .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 1rem; padding: 1rem; box-shadow: 0 1px 2px rgba(15,23,42,.05); }
+  .field { width: 100%; border: 1px solid #cbd5e1; border-radius: .6rem; padding: .5rem .75rem; background: #fff; outline: none; }
+  .field:focus { border-color: #b08d3a; box-shadow: 0 0 0 3px rgba(176,141,58,.2); }
+  .label { display: block; font-size: .85rem; font-weight: 700; color: #334155; margin-bottom: .35rem; }
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800 antialiased">
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useCallback } = React;
+
+/* ---------- ثوابت ---------- */
+const SCHOOL = 'إدارة متوسطة المستقبل للبنين';
+const EXAM_SCHOOL = 'مدرسة المستقبل للبنين';
+const EXAM_TITLE = 'جدول الامتحانات';
+const MANAGER = 'أستاذ وهاب الموسوي';
+const GOLD = '#b08d3a';
+const PAPER_W = 794;   // A4 بدقة 96 dpi
+const PAPER_H = 1123;
+const COLORS = [
+  { name: 'كحلي رسمي', hex: '#1e3a5f' },
+  { name: 'عنابي', hex: '#7a1f2b' },
+  { name: 'أخضر زيتي', hex: '#1d5c4a' },
+  { name: 'أزرق ملكي', hex: '#1f4e8c' },
+  { name: 'بنفسجي داكن', hex: '#4a2c5e' },
+  { name: 'رمادي فحمي', hex: '#334155' },
+];
+const FRAMES = {
+  classic: 'إطار مزدوج رسمي',
+  bands: 'إطار بشريطين علويين وسفليين',
+  triple: 'إطار ثلاثي الخطوط',
+  corner: 'إطار بزوايا عريضة',
+};
+const EXAM_DESIGNS = { grid: 'شبكة رسمية بحدود كاملة', soft: 'ترويسة ملوّنة وخطوط خفيفة' };
+const WEEKDAYS = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+const EXAM_COLS = [
+  { key: 'day', label: 'اليوم' },
+  { key: 'date', label: 'التاريخ' },
+  { key: 'a', label: 'الأول متوسط' },
+  { key: 'b', label: 'الثاني متوسط' },
+  { key: 'c', label: 'الثالث متوسط' },
+];
+const MAX_ROWS = 15;
+const emptyRow = () => ({ day: '', date: '', a: '', b: '', c: '' });
+const emptyRows = (n = 10) => Array.from({ length: n }, emptyRow);
+
+/* ---------- أدوات مساعدة ---------- */
+const cleanName = (n) => (n || '').replace(/[\\/:*?"<>|]+/g, '-').trim() || 'ملف';
+const localISO = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const parseISO = (iso) => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d); };
+const fmtDate = (iso) => parseISO(iso).toLocaleDateString('ar-IQ', { year: 'numeric', month: 'long', day: 'numeric' });
+const weekdayOf = (iso) => WEEKDAYS[parseISO(iso).getDay()];
+const todayAr = () => fmtDate(localISO(new Date()));
+// الأيام الافتراضية: الأحد إلى الخميس امتحان، والجمعة والسبت عطلة
+function buildDays(startIso, count = 21) {
+  const start = parseISO(startIso);
+  return Array.from({ length: count }, (_, i) => {
+    const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+    const day = d.getDay();
+    return { iso: localISO(d), exam: day !== 5 && day !== 6 };
+  });
+}
+
+function loadStored(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? { ...fallback, ...JSON.parse(raw) } : fallback;
+  } catch (e) { return fallback; }
+}
+function saveStored(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* التخزين غير متاح */ }
+}
+function useStored(key, fallback) {
+  const [value, setValue] = useState(() => loadStored(key, fallback));
+  useEffect(() => saveStored(key, value), [key, value]);
+  return [value, setValue];
+}
+function useToast() {
+  const [msg, setMsg] = useState('');
+  const timer = useRef(null);
+  const notify = useCallback((m) => {
+    setMsg(m);
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => setMsg(''), 2800);
+  }, []);
+  return [msg, notify];
+}
+
+/* ---------- الأيقونات (SVG داخلي) ---------- */
+const ICONS = {
+  download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/>',
+  image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/>',
+  share: '<path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="M16 6l-4-4-4 4"/><path d="M12 2v13"/>',
+  calendar: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
+  trash: '<path d="M3 6h18"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M9 6V4h6v2"/>',
+  alignRight: '<path d="M21 6H3M21 12H9M21 18H7"/>',
+  alignCenter: '<path d="M21 6H3M17 12H7M19 18H5"/>',
+  alignLeft: '<path d="M21 6H3M15 12H3M17 18H3"/>',
+  check: '<path d="M20 6L9 17l-5-5"/>',
+  table: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/>',
+  file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>',
+  letter: '<path d="M4 4h16v16H4z"/><path d="M4 8l8 5 8-5"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  minus: '<path d="M5 12h14"/>',
+  frame: '<rect x="3" y="3" width="18" height="18" rx="1"/><rect x="7" y="7" width="10" height="10" rx="0"/>',
+  eraser: '<path d="M7 21h10"/><path d="M5.5 13.5l8-8a2.1 2.1 0 0 1 3 3l-8 8L5 19z"/>',
+  wand: '<path d="M15 4V2M15 16v-2M8 9h2M20 9h2M17.8 11.8L19 13M17.8 6.2L19 5M3 21l9-9M12.2 6.2L11 5"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/>',
+  palette: '<circle cx="13.5" cy="6.5" r=".5"/><circle cx="17.5" cy="10.5" r=".5"/><circle cx="8.5" cy="7.5" r=".5"/><circle cx="6.5" cy="12.5" r=".5"/><path d="M12 2a10 10 0 1 0 0 20 2 2 0 0 0 1.6-3.3 2 2 0 0 1 1.5-3.7H19a3 3 0 0 0 3-3c0-5.5-4.5-10-10-10z"/>',
+};
+function Icon({ name, size = 18, className = '' }) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24"
+      fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+      className={className} aria-hidden="true" dangerouslySetInnerHTML={{ __html: ICONS[name] || '' }} />
+  );
+}
+
+/* ---------- خلية قابلة للتحرير داخل الصفحة ---------- */
+function EditCell({ value = '', onChange, multiline = false, placeholder = '', className = '', style, cellId }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const el = ref.current;
+    // نحدّث النص من الحالة فقط عندما لا يكون الحقل في التركيز (حتى لا يقفز المؤشر)
+    if (el && document.activeElement !== el && el.innerText !== value) el.innerText = value;
+  }, [value]);
+  return (
+    <div
+      ref={ref}
+      contentEditable
+      suppressContentEditableWarning
+      spellCheck={false}
+      role="textbox"
+      aria-label={placeholder || 'نص قابل للتعديل'}
+      data-ph={placeholder}
+      data-cell={cellId}
+      className={`outline-none ${className}`}
+      style={style}
+      onInput={(e) => {
+        let t = e.currentTarget.innerText;
+        if (!multiline) t = t.replace(/\n/g, '');
+        if (t === '\n') t = '';
+        onChange(t);
+      }}
+      onKeyDown={(e) => { if (!multiline && e.key === 'Enter') e.preventDefault(); }}
+      onPaste={(e) => {
+        e.preventDefault();
+        let t = e.clipboardData.getData('text/plain');
+        if (!multiline) t = t.replace(/\s*\n\s*/g, ' ');
+        document.execCommand('insertText', false, t);
+      }}
+    />
+  );
+}
+
+/* ---------- الصفحة A4 مع تصغير تلقائي للشاشات الصغيرة ---------- */
+function Sheet({ innerRef, className = '', children }) {
+  const wrapRef = useRef(null);
+  const [scale, setScale] = useState(1);
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const update = () => setScale(Math.min(1, el.clientWidth / PAPER_W));
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return (
+    <div ref={wrapRef} className="relative w-full" style={{ height: PAPER_H * scale }}>
+      <div
+        ref={innerRef}
+        className={`absolute top-0 left-1/2 bg-white text-slate-900 shadow-xl font-['Cairo'] leading-relaxed ${className}`}
+        style={{ width: PAPER_W, height: PAPER_H, transform: `translateX(-50%) scale(${scale})`, transformOrigin: 'top center' }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- التصدير ---------- */
+async function renderCanvas(node) {
+  const prev = { transform: node.style.transform, left: node.style.left };
+  node.style.transform = 'none';
+  node.style.left = '0px';
+  try {
+    await new Promise((r) => requestAnimationFrame(() => r()));
+    return await html2canvas(node, { scale: 3, backgroundColor: '#ffffff', useCORS: true, logging: false });
+  } finally {
+    node.style.transform = prev.transform;
+    node.style.left = prev.left;
+  }
+}
+const canvasBlob = (canvas) => new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+function downloadBlob(blob, fileName) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+async function runExport(kind, node, base, notify) {
+  const canvas = await renderCanvas(node);
+  if (kind === 'png') {
+    downloadBlob(await canvasBlob(canvas), base + '.png');
+    notify('تم تحميل الصورة');
+  } else if (kind === 'pdf') {
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, 210, 297);
+    pdf.save(base + '.pdf');
+    notify('تم تحميل ملف PDF');
+  } else if (kind === 'share') {
+    const blob = await canvasBlob(canvas);
+    const file = new File([blob], base + '.png', { type: 'image/png' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: base });
+    } else if (navigator.share) {
+      await navigator.share({ title: base, text: base });
+    } else {
+      await navigator.clipboard.writeText(location.href);
+      notify('المشاركة المباشرة غير مدعومة هنا، تم نسخ رابط الصفحة');
+    }
+  }
+}
+
+/* ---------- شريط التصدير ---------- */
+function ExportBar({ name, setName, onExport, busy, inputId }) {
+  return (
+    <section className="card">
+      <label htmlFor={inputId} className="label">اسم الملف قبل التصدير</label>
+      <div className="flex flex-col gap-3 md:flex-row md:items-center">
+        <input id={inputId} value={name} onChange={(e) => setName(e.target.value)} placeholder="اكتب اسم الملف" className="field md:flex-1" />
+        <div className="flex flex-wrap gap-2">
+          <button className="btn btn-primary" disabled={busy} onClick={() => onExport('pdf')}><Icon name="download" /> تحميل PDF</button>
+          <button className="btn btn-ghost" disabled={busy} onClick={() => onExport('png')}><Icon name="image" /> تحميل صورة (PNG)</button>
+          <button className="btn btn-ghost" disabled={busy} onClick={() => onExport('share')}><Icon name="share" /> مشاركة</button>
+        </div>
+      </div>
+      {busy && <p className="mt-2 text-sm text-slate-500">جاري التجهيز بدقة عالية…</p>}
+    </section>
+  );
+}
+
+/* ---------- اختيار اللون (مربعات) ---------- */
+function Swatches({ value, onChange }) {
+  return (
+    <div className="flex flex-wrap items-center gap-2" role="radiogroup" aria-label="لون التصميم">
+      {COLORS.map((c) => (
+        <button
+          key={c.hex}
+          role="radio"
+          aria-checked={value === c.hex}
+          aria-label={c.name}
+          title={c.name}
+          onClick={() => onChange(c.hex)}
+          className={`h-8 w-8 rounded-md border-2 transition ${value === c.hex ? 'border-slate-900 ring-2 ring-slate-400 ring-offset-2' : 'border-white shadow hover:scale-110'}`}
+          style={{ background: c.hex }}
+        />
+      ))}
+      <span className="ms-2 text-sm text-slate-500">{COLORS.find((c) => c.hex === value)?.name || ''}</span>
+    </div>
+  );
+}
+
+/* ---------- الإطارات الرسمية ---------- */
+function FrameBoxExtra({ frame, color, children }) {
+  if (frame === 'triple') {
+    return (
+      <div className="flex flex-1 flex-col border-[5px] p-[5px]" style={{ borderColor: color }}>
+        <div className="flex flex-1 flex-col border-[1px] p-[5px]" style={{ borderColor: color }}>
+          <div className="flex flex-1 flex-col border-[2px] px-[36px] py-[30px]" style={{ borderColor: GOLD }}>
+            {children}
+          </div>
+        </div>
+      </div>
+    );
+  }
+  const corner = (pos) => ({ position: 'absolute', width: 70, height: 70, borderColor: color, borderStyle: 'solid', borderWidth: 0, ...pos });
+  return (
+    <div className="relative flex flex-1 flex-col px-[30px] py-[26px]">
+      <span style={corner({ top: 0, right: 0, borderTopWidth: 6, borderRightWidth: 6 })} />
+      <span style={corner({ top: 0, left: 0, borderTopWidth: 6, borderLeftWidth: 6 })} />
+      <span style={corner({ bottom: 0, right: 0, borderBottomWidth: 6, borderRightWidth: 6 })} />
+      <span style={corner({ bottom: 0, left: 0, borderBottomWidth: 6, borderLeftWidth: 6 })} />
+      <div className="flex flex-1 flex-col px-[30px] py-[24px]" style={{ borderTop: `1px solid ${GOLD}`, borderBottom: `1px solid ${GOLD}` }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+function FrameBox({ frame, color, children }) {
+  if (frame === 'triple' || frame === 'corner') {
+    return <FrameBoxExtra frame={frame} color={color}>{children}</FrameBoxExtra>;
+  }
+  if (frame === 'bands') {
+    return (
+      <div className="flex flex-1 flex-col">
+        <div style={{ background: color, height: 18 }} />
+        <div style={{ background: GOLD, height: 3 }} />
+        <div className="flex flex-1 flex-col px-[46px] py-[34px]">{children}</div>
+        <div style={{ background: GOLD, height: 3 }} />
+        <div style={{ background: color, height: 18 }} />
+      </div>
+    );
+  }
+  const corners = [['top', 'left'], ['top', 'right'], ['bottom', 'left'], ['bottom', 'right']];
+  return (
+    <div className="relative flex flex-1 flex-col border-[6px] p-[8px]" style={{ borderColor: color }}>
+      <div className="relative flex flex-1 flex-col border-[1.5px] px-[40px] py-[34px]" style={{ borderColor: GOLD }}>
+        {corners.map(([v, h]) => (
+          <span key={v + h} className="absolute h-[16px] w-[16px] rotate-45" style={{ background: GOLD, [v]: -9, [h]: -9 }} />
+        ))}
+        {children}
+      </div>
+    </div>
+  );
+}
+function MiniFrame({ frame, color }) {
+  if (frame === 'triple') {
+    return (
+      <div className="h-full w-full bg-white p-[3px]" style={{ border: `3px solid ${color}` }}>
+        <div className="h-full w-full p-[3px]" style={{ border: `1px solid ${color}` }}>
+          <div className="h-full w-full p-[3px]" style={{ border: `2px solid ${GOLD}` }}>
+            <div className="space-y-1.5 p-1"><div className="h-1 w-3/4 rounded bg-slate-300" /><div className="h-1 w-5/6 rounded bg-slate-200" /></div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (frame === 'corner') {
+    return (
+      <div className="relative h-full w-full bg-white p-[6px]">
+        <span className="absolute left-0 top-0 h-[14px] w-[14px]" style={{ borderTop: `3px solid ${color}`, borderLeft: `3px solid ${color}` }} />
+        <span className="absolute right-0 top-0 h-[14px] w-[14px]" style={{ borderTop: `3px solid ${color}`, borderRight: `3px solid ${color}` }} />
+        <span className="absolute bottom-0 left-0 h-[14px] w-[14px]" style={{ borderBottom: `3px solid ${color}`, borderLeft: `3px solid ${color}` }} />
+        <span className="absolute bottom-0 right-0 h-[14px] w-[14px]" style={{ borderBottom: `3px solid ${color}`, borderRight: `3px solid ${color}` }} />
+        <div className="space-y-1.5 px-2 py-4"><div className="h-1 w-3/4 rounded bg-slate-300" /><div className="h-1 w-5/6 rounded bg-slate-200" /></div>
+      </div>
+    );
+  }
+  if (frame === 'bands') {
+    return (
+      <div className="flex h-full w-full flex-col bg-white">
+        <div style={{ background: color, height: 8 }} />
+        <div style={{ background: GOLD, height: 2 }} />
+        <div className="flex-1 p-2"><div className="space-y-1.5"><div className="h-1 w-3/4 rounded bg-slate-300" /><div className="h-1 w-5/6 rounded bg-slate-200" /></div></div>
+        <div style={{ background: GOLD, height: 2 }} />
+        <div style={{ background: color, height: 8 }} />
+      </div>
+    );
+  }
+  return (
+    <div className="h-full w-full bg-white p-[4px]" style={{ border: `3px solid ${color}` }}>
+      <div className="h-full w-full p-2" style={{ border: `1px solid ${GOLD}` }}>
+        <div className="space-y-1.5"><div className="h-1 w-3/4 rounded bg-slate-300" /><div className="h-1 w-5/6 rounded bg-slate-200" /></div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- توقيع المدرسة (يسار الصفحة، يظهر في كل الكتب والجداول) ---------- */
+function SignatureBlock({ color }) {
+  return (
+    <div className="mt-auto flex w-full items-start justify-end pt-8 text-[17px] leading-loose">
+      <div className="text-center">
+        <p className="font-bold">مدير المدرسة</p>
+        <p>عبد الوهاب صبري حسين</p>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- القسم الأول: الكتب الرسمية ---------- */
+const LETTER_INIT = { num: '', date: '', to: '', m: '', body: '', align: 'right', frame: 'classic', color: COLORS[0].hex, approved: null };
+const ALIGNS = [['right', 'alignRight', 'يمين'], ['center', 'alignCenter', 'وسط'], ['left', 'alignLeft', 'يسار']];
+
+function FramePicker({ data, setData }) {
+  const approve = () => setData((d) => ({ ...d, approved: d.frame }));
+  const revoke = () => setData((d) => ({ ...d, approved: null }));
+  return (
+    <section className="card space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h3 className="flex items-center gap-2 font-bold text-slate-800"><Icon name="frame" /> الإطار والتصميم</h3>
+        {data.approved
+          ? <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-3 py-1 text-sm font-bold text-emerald-700"><Icon name="check" size={14} /> معتمد: {FRAMES[data.approved]}</span>
+          : <span className="rounded-full bg-amber-100 px-3 py-1 text-sm font-bold text-amber-700">بانتظار اعتمادك</span>}
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        {Object.keys(FRAMES).map((key) => (
+          <button
+            key={key}
+            aria-pressed={data.frame === key}
+            onClick={() => setData((d) => ({ ...d, frame: key }))}
+            className={`rounded-xl border-2 p-2 text-center transition ${data.frame === key ? 'border-[#b08d3a] bg-amber-50' : 'border-slate-200 hover:border-slate-400'}`}
+          >
+            <div className="mx-auto h-[120px] w-[88px] bg-white shadow"><MiniFrame frame={key} color={data.color} /></div>
+            <div className="mt-2 text-sm font-semibold">{FRAMES[key]}</div>
+          </button>
+        ))}
+      </div>
+      <div>
+        <p className="label">لون الإطار والعناوين</p>
+        <Swatches value={data.color} onChange={(c) => setData((d) => ({ ...d, color: c }))} />
+      </div>
+      <p className="text-sm text-slate-500">المعاينة الكاملة تظهر في الصفحة أدناه. بعد أن تتأكد منها اضغط اعتماد.</p>
+      <div className="flex flex-wrap gap-2">
+        {data.frame !== data.approved && <button className="btn btn-primary" onClick={approve}><Icon name="check" /> اعتماد الإطار المعروض</button>}
+        {data.approved && <button className="btn btn-ghost" onClick={revoke}>إلغاء الاعتماد لتغيير الإطار</button>}
+      </div>
+    </section>
+  );
+}
+
+function LetterForm({ data, set }) {
+  const today = () => set('date')(todayAr());
+  return (
+    <section className="card">
+      <h3 className="mb-4 flex items-center gap-2 font-bold text-slate-800"><Icon name="user" /> تعبئة البيانات</h3>
+      <div className="grid gap-4 md:grid-cols-2">
+        <div>
+          <label className="label" htmlFor="l-num">العدد</label>
+          <input id="l-num" className="field" value={data.num} onChange={(e) => set('num')(e.target.value)} />
+        </div>
+        <div>
+          <label className="label" htmlFor="l-date">التاريخ</label>
+          <div className="flex gap-2">
+            <input id="l-date" className="field" value={data.date} onChange={(e) => set('date')(e.target.value)} />
+            <button className="btn btn-ghost shrink-0" onClick={today}><Icon name="calendar" size={16} /> تاريخ اليوم</button>
+          </div>
+        </div>
+        <div>
+          <label className="label" htmlFor="l-to">إلى</label>
+          <input id="l-to" className="field" value={data.to} onChange={(e) => set('to')(e.target.value)} />
+        </div>
+        <div>
+          <label className="label" htmlFor="l-m">م</label>
+          <input id="l-m" className="field" value={data.m} onChange={(e) => set('m')(e.target.value)} />
+        </div>
+        <div className="md:col-span-2">
+          <label className="label" htmlFor="l-body">الموضوع / النص الأساسي</label>
+          <textarea id="l-body" rows={6} className="field" value={data.body} onChange={(e) => set('body')(e.target.value)} />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function LetterTab({ notify }) {
+  const [data, setData] = useStored('mustaqbal-letter-v2', LETTER_INIT);
+  const [name, setName] = useState('كتاب رسمي');
+  const [busy, setBusy] = useState(false);
+  const paperRef = useRef(null);
+  const set = (k) => (v) => setData((d) => ({ ...d, [k]: v }));
+
+  const doExport = async (kind) => {
+    if (!paperRef.current) return;
+    setBusy(true);
+    try { await runExport(kind, paperRef.current, cleanName(name), notify); }
+    catch (e) { if (e && e.name !== 'AbortError') { notify('تعذّر التصدير، حاول مرة أخرى'); console.error(e); } }
+    finally { setBusy(false); }
+  };
+  const clearAll = () => {
+    if (window.confirm('هل تريد مسح محتوى الكتاب؟')) {
+      setData((d) => ({ ...LETTER_INIT, frame: d.frame, color: d.color, approved: d.approved }));
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+      <FramePicker data={data} setData={setData} />
+      <LetterForm data={data} set={set} />
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-1 rounded-xl border border-slate-300 bg-white p-1">
+          {ALIGNS.map(([v, icon, label]) => (
+            <button key={v} aria-label={'محاذاة ' + label} aria-pressed={data.align === v} onClick={() => set('align')(v)}
+              className={`rounded-lg p-2 transition ${data.align === v ? 'bg-[#1e3a5f] text-white' : 'text-slate-600 hover:bg-slate-100'}`}>
+              <Icon name={icon} />
+            </button>
+          ))}
+          <span className="px-2 text-sm text-slate-500">محاذاة النص</span>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-slate-500">يُحفظ تلقائياً في متصفحك</span>
+          <button className="btn btn-ghost" onClick={clearAll}><Icon name="eraser" /> مسح</button>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto rounded-2xl bg-slate-200/70 p-3 md:p-6">
+        <Sheet innerRef={paperRef} className="flex flex-col p-[24px]">
+          <FrameBox frame={data.frame} color={data.color}>
+            <div className="flex items-start justify-between gap-6">
+              <div className="pt-1" style={{ color: data.color }}>
+                <div className="text-[25px] font-extrabold leading-tight">إدارة متوسطة</div>
+                <div className="mt-2 inline-block border px-3 py-0.5 text-[18px] font-bold leading-snug" style={{ borderColor: GOLD }}>المستقبل للبنين</div>
+              </div>
+              <div className="w-[250px] shrink-0 space-y-3 text-[16px]">
+                <div className="flex items-baseline gap-2"><span className="shrink-0 font-bold">العدد /</span><EditCell value={data.num} onChange={set('num')} className="min-w-0 flex-1 break-words px-1" /></div>
+                <div className="flex items-baseline gap-2"><span className="shrink-0 font-bold">التاريخ /</span><EditCell value={data.date} onChange={set('date')} className="min-w-0 flex-1 break-words px-1" /></div>
+              </div>
+            </div>
+            <div className="mt-10 space-y-4 text-[18px]">
+              <div className="flex items-baseline justify-center gap-3">
+                <span className="shrink-0 font-bold">إلى /</span>
+                <EditCell value={data.to} onChange={set('to')} className="min-h-[1.8em] w-[340px] max-w-full break-words px-1 text-center" />
+              </div>
+              <div className="flex -translate-x-[60px] items-baseline justify-center gap-3">
+                <span className="shrink-0 font-bold">م /</span>
+                <EditCell value={data.m} onChange={set('m')} className="min-h-[1.8em] w-[340px] max-w-full break-words px-1 text-center" />
+              </div>
+            </div>
+            <EditCell
+              multiline
+              value={data.body}
+              onChange={set('body')}
+              className="mt-8 min-h-[460px] flex-1 whitespace-pre-wrap text-[18px] leading-[2.1]"
+              style={{ textAlign: data.align }}
+            />
+            <SignatureBlock color={data.color} />
+          </FrameBox>
+        </Sheet>
+      </div>
+
+      <ExportBar name={name} setName={setName} onExport={doExport} busy={busy} inputId="letter-name" />
+    </div>
+  );
+}
+
+/* ---------- القسم الثاني: جداول الامتحانات ---------- */
+const EXAM_INIT = {
+  design: 'grid',
+  color: COLORS[0].hex,
+  headers: EXAM_COLS.map((c) => c.label),
+  rows: emptyRows(10),
+  wStart: localISO(new Date()),
+  wDays: buildDays(localISO(new Date())),
+  wCol: 'a',
+};
+
+function ExamPaper({ data, setData, innerRef }) {
+  const { design, color, headers, rows } = data;
+  const soft = design === 'soft';
+  const setRow = (i, k, v) => setData((d) => ({ ...d, rows: d.rows.map((r, j) => (j === i ? { ...r, [k]: v } : r)) }));
+  const setHeader = (i, v) => setData((d) => ({ ...d, headers: d.headers.map((h, j) => (j === i ? v : h)) }));
+  const thStyle = soft ? { background: color, color: '#fff' } : { background: color + '1f', color };
+  const cellBorder = soft ? 'border-b border-slate-200' : 'border border-slate-700';
+  return (
+    <Sheet innerRef={innerRef} className="flex flex-col p-[48px]">
+      <div className="text-center">
+        <h2 className="text-[26px] font-extrabold" style={{ color }}>{EXAM_SCHOOL}</h2>
+        <h3 className="mt-1 text-[20px] font-bold text-slate-700">{EXAM_TITLE}</h3>
+      </div>
+      <div className={`mt-8 ${soft ? 'overflow-hidden rounded-xl border border-slate-300' : ''}`}>
+        <table className="w-full border-collapse text-center text-[15px]">
+          <thead>
+            <tr>
+              {EXAM_COLS.map((c, i) => (
+                <th key={c.key} className={`${soft ? 'py-3' : 'border border-slate-700 py-2'} px-2 font-bold`} style={thStyle}>
+                  <EditCell value={headers[i]} onChange={(v) => setHeader(i, v)} className="px-1" />
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={i} style={soft && i % 2 === 1 ? { background: color + '0d' } : undefined}>
+                {EXAM_COLS.map((c) => (
+                  <td key={c.key} className={`${cellBorder} px-1`}>
+                    <EditCell value={r[c.key]} onChange={(v) => setRow(i, c.key, v)} cellId={`${i}-${c.key}`} className="min-h-[34px] px-1 py-1 text-center" />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <SignatureBlock color={color} />
+    </Sheet>
+  );
+}
+
+function DayWizard({ data, setData, notify }) {
+  const setStart = (iso) => setData((d) => ({ ...d, wStart: iso, wDays: buildDays(iso) }));
+  const toggle = (i) => setData((d) => ({ ...d, wDays: d.wDays.map((x, j) => (j === i ? { ...x, exam: !x.exam } : x)) }));
+  const examCount = data.wDays.filter((x) => x.exam).length;
+
+  const apply = () => {
+    const exams = data.wDays.filter((x) => x.exam);
+    if (!exams.length) { notify('لا توجد أيام امتحان محددة'); return; }
+    if (exams.length > MAX_ROWS) notify(`الجدول يتسع لـ ${MAX_ROWS} يوماً، تم تطبيق أول ${MAX_ROWS}`);
+    const list = exams.slice(0, MAX_ROWS);
+    setData((d) => ({
+      ...d,
+      rows: list.map((x, i) => ({ ...(d.rows[i] || emptyRow()), day: weekdayOf(x.iso), date: fmtDate(x.iso) })),
+    }));
+    setTimeout(() => {
+      const el = document.querySelector(`[data-cell="0-${data.wCol}"]`);
+      if (el) el.focus();
+    }, 120);
+    notify('تم تعبئة الأيام والتواريخ، ابدأ بإدخال المواد');
+  };
+
+  return (
+    <section className="card space-y-4">
+      <div className="flex items-center gap-2 font-bold text-slate-800"><Icon name="wand" /> معالج الأيام والتواريخ</div>
+      <p className="text-sm text-slate-600">
+        اختر تاريخ أول يوم، ثم حدّد الأيام التي فيها امتحان. الجمعة والسبت عطلة افتراضياً. عند التطبيق تُملأ الأيام والتواريخ تلقائياً.
+      </p>
+      <div className="grid gap-4 md:grid-cols-2">
+        <div>
+          <label className="label" htmlFor="w-start">تاريخ أول يوم امتحان</label>
+          <input id="w-start" type="date" className="field" value={data.wStart} onChange={(e) => e.target.value && setStart(e.target.value)} />
+        </div>
+        <div>
+          <label className="label" htmlFor="w-col">أول عمود تبدأ فيه التعبئة</label>
+          <select id="w-col" className="field" value={data.wCol} onChange={(e) => setData((d) => ({ ...d, wCol: e.target.value }))}>
+            {['a', 'b', 'c'].map((k, i) => <option key={k} value={k}>{data.headers[i + 2]}</option>)}
+          </select>
+        </div>
+      </div>
+      <div>
+        <p className="label">هل يوجد امتحان في هذا اليوم؟ (اضغط لتغيير الحالة)</p>
+        <div className="flex flex-wrap gap-2">
+          {data.wDays.map((x, i) => (
+            <button
+              key={x.iso}
+              onClick={() => toggle(i)}
+              aria-pressed={x.exam}
+              className={`rounded-lg border px-3 py-1.5 text-sm transition ${x.exam ? 'border-emerald-600 bg-emerald-50 text-emerald-800' : 'border-slate-300 bg-slate-50 text-slate-400 line-through'}`}
+            >
+              <span className="font-bold">{weekdayOf(x.iso)}</span> {fmtDate(x.iso)}
+            </button>
+          ))}
+        </div>
+        <p className="mt-2 text-sm text-slate-500">عدد أيام الامتحان المحددة: {examCount}</p>
+      </div>
+      <button className="btn btn-primary" onClick={apply}><Icon name="wand" /> تطبيق على الجدول</button>
+    </section>
+  );
+}
+
+function ExamTab({ notify }) {
+  const [data, setData] = useStored('mustaqbal-exam-v2', EXAM_INIT);
+  const [name, setName] = useState('جدول الامتحانات');
+  const [busy, setBusy] = useState(false);
+  const paperRef = useRef(null);
+  const setRows = (fn) => setData((d) => ({ ...d, rows: fn(d.rows) }));
+
+  const doExport = async (kind) => {
+    if (!paperRef.current) return;
+    setBusy(true);
+    try { await runExport(kind, paperRef.current, cleanName(name), notify); }
+    catch (e) { if (e && e.name !== 'AbortError') { notify('تعذّر التصدير، حاول مرة أخرى'); console.error(e); } }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="space-y-5">
+      <DayWizard data={data} setData={setData} notify={notify} />
+
+      <section className="card space-y-4">
+        <div className="flex items-center gap-2 font-bold text-slate-800"><Icon name="palette" /> التصميم واللون</div>
+        <div className="grid grid-cols-2 gap-3">
+          {Object.keys(EXAM_DESIGNS).map((key) => (
+            <button key={key} aria-pressed={data.design === key} onClick={() => setData((d) => ({ ...d, design: key }))}
+              className={`rounded-xl border-2 p-3 text-center transition ${data.design === key ? 'border-[#b08d3a] bg-amber-50' : 'border-slate-200 hover:border-slate-400'}`}>
+              <div className={`mx-auto mb-2 h-[60px] w-full max-w-[160px] overflow-hidden ${key === 'soft' ? 'rounded-lg border border-slate-300' : 'border border-slate-600'}`}>
+                <div className="h-3" style={{ background: key === 'soft' ? data.color : data.color + '1f', borderBottom: key === 'grid' ? '1px solid #475569' : 'none' }} />
+                <div className="grid grid-cols-3 gap-px bg-slate-300 p-px">
+                  {Array.from({ length: 9 }, (_, i) => <div key={i} className="h-[12px] bg-white" />)}
+                </div>
+              </div>
+              <div className="text-sm font-semibold">{EXAM_DESIGNS[key]}</div>
+            </button>
+          ))}
+        </div>
+        <div>
+          <p className="label">لون الترويسة</p>
+          <Swatches value={data.color} onChange={(c) => setData((d) => ({ ...d, color: c }))} />
+        </div>
+      </section>
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex gap-2">
+          <button className="btn btn-ghost" disabled={data.rows.length >= MAX_ROWS} onClick={() => setRows((rs) => [...rs, emptyRow()])}><Icon name="plus" /> إضافة صف</button>
+          <button className="btn btn-ghost" disabled={data.rows.length <= 1} onClick={() => setRows((rs) => rs.slice(0, -1))}><Icon name="minus" /> حذف آخر صف</button>
+        </div>
+        <button className="btn btn-ghost" onClick={() => { if (window.confirm('هل تريد مسح كل محتوى الجدول؟')) setRows(() => emptyRows(10)); }}>
+          <Icon name="trash" /> مسح الجدول
+        </button>
+      </div>
+      <p className="text-sm text-slate-500">يمكنك الكتابة مباشرة في أي خلية أو عنوان داخل الجدول.</p>
+
+      <div className="overflow-x-auto rounded-2xl bg-slate-200/70 p-3 md:p-6">
+        <ExamPaper data={data} setData={setData} innerRef={paperRef} />
+      </div>
+
+      <ExportBar name={name} setName={setName} onExport={doExport} busy={busy} inputId="exam-name" />
+    </div>
+  );
+}
+
+/* ---------- التطبيق ---------- */
+function App() {
+  const [tab, setTab] = useState('letter');
+  const [toastMsg, notify] = useToast();
+  const tabs = [
+    { id: 'letter', label: 'الكتب الرسمية', icon: 'letter' },
+    { id: 'exam', label: 'جداول الامتحانات', icon: 'table' },
+  ];
+  return (
+    <div className="min-h-screen">
+      <header className="bg-[#1e3a5f] text-white shadow-md">
+        <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 py-5">
+          <div className="rounded-xl border border-[#b08d3a] p-2 text-[#d9b65f]"><Icon name="file" size={26} /></div>
+          <div>
+            <h1 className="text-xl font-extrabold md:text-2xl">متوسطة المستقبل للبنين</h1>
+            <p className="text-sm text-slate-300">الكتب الرسمية وجداول الامتحانات</p>
+          </div>
+        </div>
+        <div className="h-[3px] bg-[#b08d3a]" />
+      </header>
+
+      <nav className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 backdrop-blur" role="tablist">
+        <div className="mx-auto flex max-w-5xl gap-2 px-4 py-3">
+          {tabs.map((t) => (
+            <button key={t.id} role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)}
+              className={`btn flex-1 justify-center md:flex-none ${tab === t.id ? 'btn-primary' : 'btn-ghost'}`}>
+              <Icon name={t.icon} /> {t.label}
+            </button>
+          ))}
+        </div>
+      </nav>
+
+      <main className="mx-auto max-w-5xl px-4 py-6">
+        {tab === 'letter' ? <LetterTab notify={notify} /> : <ExamTab notify={notify} />}
+      </main>
+
+      {toastMsg && (
+        <div role="status" className="fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-xl bg-slate-800 px-4 py-2 text-sm text-white shadow-lg">
+          {toastMsg}
+        </div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
