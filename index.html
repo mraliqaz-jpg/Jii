@@ -35,7 +35,7 @@
 <div id="root"></div>
 
 <script type="text/babel" data-presets="react">
-const { useState, useEffect, useRef, useCallback } = React;
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
 
 /* ---------- ثوابت ---------- */
 const SCHOOL = 'إدارة متوسطة المستقبل للبنين';
@@ -231,29 +231,40 @@ function downloadBlob(blob, fileName) {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+function makePdfBlob(canvas) {
+  const { jsPDF } = window.jspdf;
+  const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, 210, 297);
+  return pdf.output('blob');
+}
+// kind: 'share' (مشاركة) | 'pdf' | 'png' (تحميل/حفظ)
+// على الآيفون تفتح نافذة المشاركة الأصلية (حفظ في الملفات أو الصور أو إرسال).
+// إذا تعذّرت، تفتح نافذة معاينة فيها روابط مباشرة تعمل بضغطة واحدة.
 async function runExport(kind, node, base, notify) {
   const canvas = await renderCanvas(node);
-  if (kind === 'png') {
-    downloadBlob(await canvasBlob(canvas), base + '.png');
-    notify('تم تحميل الصورة');
-  } else if (kind === 'pdf') {
-    const { jsPDF } = window.jspdf;
-    const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-    pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, 210, 297);
-    pdf.save(base + '.pdf');
-    notify('تم تحميل ملف PDF');
-  } else if (kind === 'share') {
-    const blob = await canvasBlob(canvas);
-    const file = new File([blob], base + '.png', { type: 'image/png' });
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+  const png = await canvasBlob(canvas);
+  const pdf = makePdfBlob(canvas);
+  const pngFile = new File([png], base + '.png', { type: 'image/png' });
+  const pdfFile = new File([pdf], base + '.pdf', { type: 'application/pdf' });
+  const file = kind === 'png' ? pngFile : pdfFile;
+
+  if ((kind === 'share' || isIOS) && navigator.canShare && navigator.canShare({ files: [file] })) {
+    try {
       await navigator.share({ files: [file], title: base });
-    } else if (navigator.share) {
-      await navigator.share({ title: base, text: base });
-    } else {
-      await navigator.clipboard.writeText(location.href);
-      notify('المشاركة المباشرة غير مدعومة هنا، تم نسخ رابط الصفحة');
+      notify(kind === 'share' ? 'تمت المشاركة' : 'اختر "حفظ في الملفات" أو "حفظ الصورة"');
+      return;
+    } catch (e) {
+      if (e && e.name === 'AbortError') return;
+      // نكمل إلى البديل
     }
   }
+  if (!isIOS && kind !== 'share') {
+    downloadBlob(kind === 'png' ? png : pdf, file.name);
+    notify(kind === 'png' ? 'تم تحميل الصورة' : 'تم تحميل ملف PDF');
+    return;
+  }
+  window.dispatchEvent(new CustomEvent('export-preview', { detail: { base, png, pdf, kind } }));
 }
 
 /* ---------- شريط التصدير ---------- */
@@ -768,10 +779,42 @@ function ExamTab({ notify }) {
   );
 }
 
+/* ---------- نافذة المعاينة والحفظ (للآيفون والمتصفحات التي لا تدعم المشاركة) ---------- */
+function PreviewModal({ data, onClose }) {
+  const urls = useMemo(() => (data ? { png: URL.createObjectURL(data.png), pdf: URL.createObjectURL(data.pdf) } : null), [data]);
+  useEffect(() => () => { if (urls) { URL.revokeObjectURL(urls.png); URL.revokeObjectURL(urls.pdf); } }, [urls]);
+  if (!data || !urls) return null;
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 p-4" role="dialog" aria-modal="true">
+      <div className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl">
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="font-bold text-slate-800">حفظ أو مشاركة الملف</h3>
+          <button className="btn btn-ghost" onClick={onClose}>إغلاق</button>
+        </div>
+        <img src={urls.png} alt="معاينة الصفحة" className="mx-auto mb-4 max-h-[50vh] w-auto rounded border border-slate-200" />
+        <div className="grid gap-2 sm:grid-cols-2">
+          <a href={urls.pdf} target="_blank" rel="noopener" download={data.base + '.pdf'} className="btn btn-primary justify-center">تحميل PDF</a>
+          <a href={urls.png} target="_blank" rel="noopener" download={data.base + '.png'} className="btn btn-ghost justify-center">تحميل صورة (PNG)</a>
+        </div>
+        <div className="mt-4 space-y-1 text-sm text-slate-600">
+          <p><b>على الآيفون:</b> اضغط مطولاً على الصورة واختر "حفظ الصورة" لإضافتها إلى الصور.</p>
+          <p>أو افتح ملف PDF، ثم اضغط زر المشاركة <b>⬆</b> في سفاري واختر "حفظ في الملفات" أو أي تطبيق تريده.</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ---------- التطبيق ---------- */
 function App() {
   const [tab, setTab] = useState('letter');
   const [toastMsg, notify] = useToast();
+  const [preview, setPreview] = useState(null);
+  useEffect(() => {
+    const onPreview = (e) => setPreview(e.detail);
+    window.addEventListener('export-preview', onPreview);
+    return () => window.removeEventListener('export-preview', onPreview);
+  }, []);
   const tabs = [
     { id: 'letter', label: 'الكتب الرسمية', icon: 'letter' },
     { id: 'exam', label: 'جداول الامتحانات', icon: 'table' },
@@ -804,6 +847,7 @@ function App() {
         {tab === 'letter' ? <LetterTab notify={notify} /> : <ExamTab notify={notify} />}
       </main>
 
+      <PreviewModal data={preview} onClose={() => setPreview(null)} />
       {toastMsg && (
         <div role="status" className="fixed bottom-5 left-1/2 z-50 -translate-x-1/2 rounded-xl bg-slate-800 px-4 py-2 text-sm text-white shadow-lg">
           {toastMsg}
